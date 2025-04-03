@@ -3,9 +3,10 @@
 #include <stdbool.h>
 
 // ------- Global Variables ------------
-volatile char button_pressed = ' ';
-volatile int curr_pattern = -1;
-volatile int state = 0;
+volatile int curr_top_mode = -1;
+volatile int curr_temp = 0;
+volatile int curr_window = 0;
+volatile int i2c_state = 0;
 int cursor = 0;
 int blink = 0;
 const int slave_addr = 0x0002;
@@ -84,25 +85,17 @@ void lcd_string_write(char* string) {
     }
 }
 
-void update_pattern(char* string) {
+void update_top_mode(char* string) {
     lcd_raw_send(0b00000010, 2);
 
     lcd_string_write(string);
 }
 
-void update_key(char c) {
-    char string[] = {'\0', '\0'};
-    string[0] = c;
-
-    lcd_raw_send(0xCF, 2);
-
-    lcd_string_write(string); 
-}
-
 int main(void)
 {
-    char last_pressed;
-    int last_pattern;
+    int last_top_mode = curr_top_mode;
+    int last_temp = curr_temp;
+    int last_window = curr_window;
 
     // Stop watchdog timer
     
@@ -163,53 +156,54 @@ int main(void)
         // Delay for 100000*(1/MCLK)=0.1s
         __delay_cycles(100000);
 
-        if (curr_pattern == 11) {
-            curr_pattern = last_pattern;
-            if (button_pressed == 'C') {
-                cursor ^= BIT0;
-                lcd_raw_send(0b00001100 | (cursor << 1) | (blink), 2);
-            } else if (button_pressed == '9') {
-                blink ^= BIT0;
-                lcd_raw_send(0b00001100 | (cursor << 1) | (blink), 2);
-            }
+
+        // Check for no changes
+        if (curr_top_mode == 0xFF) {
+            curr_top_mode = last_top_mode;
+        }
+        if (curr_temp == 0xFF) {
+            curr_temp = last_temp;
+        }
+        if (curr_window = 0xFF) {
+            curr_window = last_window;
         }
 
-        if (last_pressed != button_pressed) {
-            update_key(button_pressed);
-            last_pressed = button_pressed;
-        }
-
-        if (last_pattern != curr_pattern) {
-            switch (curr_pattern) {
+        // Update based on top level mode
+        if (curr_top_mode != last_top_mode && curr_top_mode != 0xFF) {
+            switch (curr_top_mode) {
                 case 0:
-                    update_pattern("static        ");
+                    update_top_mode("static        ");
                     break;
                 case 1:
-                    update_pattern("toggle        ");
+                    update_top_mode("toggle        ");
                     break;
                 case 2:
-                    update_pattern("up counter    ");
+                    update_top_mode("up counter    ");
                     break;
                 case 3:
-                    update_pattern("in and out    ");
+                    update_top_mode("in and out    ");
                     break;
                 case 4:
-                    update_pattern("down counter  ");
+                    update_top_mode("down counter  ");
                     break;
                 case 5:
-                    update_pattern("rotate 1 left ");
+                    update_top_mode("rotate 1 left ");
                     break;
                 case 6:
-                    update_pattern("rotate 7 right");
+                    update_top_mode("rotate 7 right");
                     break;
                 case 7:
-                    update_pattern("fill left     ");
+                    update_top_mode("fill left     ");
                     break;
                 case 10:
-                    update_pattern("              ");
+                    update_top_mode("              ");
             }
-            last_pattern = curr_pattern;
+            last_top_mode = curr_top_mode;
         }
+
+        // Update based on temp
+
+        // Update based on window
     }
 }
 
@@ -220,21 +214,23 @@ __interrupt void EUSCI_B0_I2C_ISR(void){
 
     switch(current) {
     case 0x08: // Rx stop condition
-        state = 0;
+        i2c_state = 0;
         P2OUT ^= BIT0;
         //UCB0CTLW0 |= UCTXACK;
         break;
     case 0x16: // Rx data
         read_data = UCB0RXBUF;
-        switch(state) {
-        case 0: // Rx pattern
-            curr_pattern = read_data;
+        switch(i2c_state) {
+        case 0: // Rx top level mode
+            curr_top_mode = read_data;
             break;
-        case 1: // Rx character
-            button_pressed = (char)(read_data);
+        case 1: // Rx temp
+            curr_temp = read_data;
             break;
+        case 2: // Rx window mode
+            curr_window = read_data;
         }
-        state++;
+        i2c_state++;
         break;
     }
 }

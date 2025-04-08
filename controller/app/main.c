@@ -71,6 +71,8 @@ uint8_t compute_ledbar() {
             led_pins = pattern_3[step[pattern]]; // Pattern 3
             step[pattern] = (step[pattern] + 1) % 6; // advance to the next step
             break;
+        case -1: 
+            led_pins = 0;
         default:
             break; 
     }
@@ -104,13 +106,8 @@ int main(void)
     setup_temp_timer();
     setup_ADC();
 
-
-
     send_buff = 0;
     ready_to_send = 0;
-
-
-
 
     PM5CTL0 &= ~LOCKLPM5;                   // Disable the GPIO power-on default high-impedance mode
                                             // to activate previously configured port settings
@@ -203,6 +200,7 @@ int main(void)
         else if (state_variable == 3) {
             char key = pressed_key();
             if(key != '\0') {
+                send_i2c_update = 1;
                 case '0':
                     //update_LCD(0, 0xFF, 0xFF);
                     change_led_pattern(0);
@@ -284,7 +282,7 @@ int main(void)
                 keypad_input[input_index] = key;
                 input_index++;
             }
-            else if (key == 'D') {
+            else if (key == 'C') {
                 int new_window = atoi(keypad_input);
                 if (new_window > 0 && new_window < 100) {
                     window_size = new_window;

@@ -4,12 +4,12 @@
 #include <msp430fr2355.h>
 
 #define MAX_WINDOW_SIZE;                             // Maximum moving average sample size
-extern volatile float sampleBuffer[MAX_WINDOW_SIZE];
+extern volatile float sampleBuffer[99];
 volatile int ADC_Value;
 volatile float temperature;
 volatile int mov_avg_index;
 volatile int count;
-volatile int update_mov_avg_flag;
+volatile int temp_update_flag;
 volatile int window_size;     
 
 void setup_ADC(void);

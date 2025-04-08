@@ -1,15 +1,13 @@
 #include <msp430fr2355.h>
 
-#define MAX_WINDOW_SIZE 99;
-
 volatile int ADC_Value;
 volatile float temperature;
 volatile int mov_avg_index = 0;
 volatile int count = 0;
-volatile int update_mov_avg_flag = 0;
+volatile int temp_update_flag = 0;
 volatile int window_size = 3;
 
-volatile float mov_avg_buffer[MAX_WIDNOW_SIZE];
+volatile float mov_avg_buffer[99];
 
 void setup_ADC() {
 
@@ -30,11 +28,11 @@ void setup_ADC() {
 }
 
 void setup_temp_timer() {
-    TB2R = 0;
-    TB2CTL |= (TBSSEL__SMCLK | MC__UP);                     // Small clock, Up counter
-    TB2CCR0 = 256;                                          // 0.5 sec timer
-    TB2CCTL0 |= CCIE;                                       // Enable Interrupt
-    TB2CCTL0 &= ~CCIFG;
+    TB3R = 0;
+    TB3CTL |= (TBSSEL__SMCLK | MC__UP);                     // Small clock, Up counter
+    TB3CCR0 = 256;                                          // 0.5 sec timer
+    TB3CCTL0 |= CCIE;                                       // Enable Interrupt
+    TB3CCTL0 &= ~CCIFG;
 }
 
 #pragma vector=ADC_VECTOR
@@ -52,12 +50,12 @@ __interrupt void ADC_ISR(void){
         count++;
     }
 
-    update_mov_avg_flag = 1;
+    temp_update_flag = 1;
 }
 
-#pragma vector=TIMER2_B0_VECTOR
-__interrupt void Timer2_B0_ISR(void) {
-    TB2CCTL0 &= ~CCIFG:
+#pragma vector=TIMER3_B0_VECTOR
+__interrupt void Timer3_B0_ISR(void) {
+    TB3CCTL0 &= ~CCIFG:
 
     ADCCTL0 |= ADCENC | ADCSC;                              // Trigger new ADC conversion every 0.5 seconds
 

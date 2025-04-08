@@ -114,9 +114,9 @@ int main(void)
 
     PM5CTL0 &= ~LOCKLPM5;                   // Disable the GPIO power-on default high-impedance mode
                                             // to activate previously configured port settings
-    //UCB0CTLW0 &= ~UCSWRST;                // Take out of reset
-    //UCB0IE |= UCTXIE0;
-    //UCB0IE |= UCRXIE0;
+    UCB0CTLW0 &= ~UCSWRST;                // Take out of reset
+    UCB0IE |= UCTXIE0;
+    UCB0IE |= UCRXIE0;
 
     __enable_interrupt();
 

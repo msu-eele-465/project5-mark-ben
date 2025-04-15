@@ -114,7 +114,11 @@ int main(void)
 __interrupt void Timer_B0_ISR(void) {
     TB0CCTL0 &= ~CCIFG;
     idle_count++;
-    if (idle_count > 5) {
+    if (idle_count > 1) {
+        P1OUT &= ~(BIT0 | BIT1 | BIT4 | BIT5 | BIT6 | BIT7); // Setup all the pins
+        P2OUT &= ~(BIT0 | BIT6);
+    }
+    if (idle_count > 4) {
         P2OUT &= ~BIT7;     // Turn off led for idle state
     }
 }

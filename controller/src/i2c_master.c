@@ -1,7 +1,9 @@
 #include "msp430fr2355.h"
 #include <msp430.h>
 #include "i2c_master.h"
+#include <stdint.h>
 
+volatile int i2c_busy = 0;
 
 void i2c_master_setup(void) {
     //-- eUSCI_B0 --
@@ -24,91 +26,48 @@ void i2c_master_setup(void) {
     
 }
 
-void update_LCD(int modeID, int temperature, int window_size) {
+ void update_LCD(int modeID, int temperature, int window_size) {
+    while(i2c_busy);
+    i2c_busy = 1;
+
+    UCB0IE &= ~UCTXIE0;
+
     UCB0CTLW0 |= UCTR;  // Transmit mode
     UCB0I2CSA = 0x02;   // Slave address
 
-    UCB0TBCNT = 3;
+    UCB0TBCNT = 4;
 
     UCB0IFG &= ~UCSTPIFG;
 
-// -- First Byte --
+    uint8_t lcdData[4];
+    lcdData[0] = (uint8_t) modeID;
+    lcdData[1] = (int)((temperature >> 8) & 0xFF);
+    lcdData[2] = (int)(temperature & 0xFF);
+    lcdData[3] = (uint8_t) window_size;
 
-    send_buff = modeID;
-    UCB0TXBUF = send_buff;
-
-    UCB0CTLW0 |= UCTXSTT;
-
-     unsigned int timeout = 10000;
-    while (!(ready_to_send) && timeout--) {
-    }
-    if (timeout == 0) {
-        return;
-    } 
-    ready_to_send = 0;
-
-// -- Second Byte --
-
-    send_buff = temperature;
-    UCB0TXBUF = send_buff;
+    
 
     UCB0CTLW0 |= UCTXSTT;
-
-     unsigned int timeout = 10000;
-    while (!(ready_to_send) && timeout--) {
+    int i;
+    for (i = 0; i < 4; i++) {
+        while(!(UCB0IFG & UCTXIFG));
+        UCB0TXBUF = lcdData[i];
     }
-    if (timeout == 0) {
-        return;
-    } 
-    ready_to_send = 0;
 
-// -- Third Byte --
-    send_buff = window_size;
-    UCB0TXBUF = send_buff;
-
-    UCB0CTLW0 |= UCTXSTT;
-
-     unsigned int timeout = 10000;
-    while (!(ready_to_send) && timeout--) {
-    }
-    if (timeout == 0) {
-        return;
-    } 
-    ready_to_send = 0;
-
-    timeout = 10000;
+     unsigned int timeout = 1000;
     while (!(UCB0IFG & UCSTPIFG) && timeout--) {
         ;
-    } 
+    }   
     UCB0IFG &= ~UCSTPIFG;
-}
 
-void i2c_write_lcd(unsigned int pattNum, char character) {
-    UCB0CTLW0 |= UCSWRST;
-    UCB0CTLW0 |= UCTR;
-    UCB0I2CSA = 0x0002;
-    UCB0TBCNT = 0x02;                   // Number of bytes
-    UCB0CTLW0 &= ~UCSWRST;
+    i2c_busy = 0;
+
     UCB0IE |= UCTXIE0;
-
-    send_buff = pattNum;                // Send data byte
-    UCB0CTLW0 |= UCTXSTT;               // Generate Start Condition
-
-    
-    while (!(ready_to_send));       // Wait for TX Buffer
-    ready_to_send = 0;
-    
-
-
-    send_buff = (int)character;                // Send data byte
-    while (!(ready_to_send));       // Wait for TX Buffer
-    ready_to_send = 0;
-
-    //while((UCB0IFG & UCSTPIFG) == 0){};
-    //    UCB0IFG &= ~UCSTPIFG;
 }
 
-void i2c_write_led(unsigned int pattNum) {
+ void i2c_write_led(unsigned int pattNum) {
+    while(i2c_busy);
+    i2c_busy = 1;
 
     UCB0CTLW0 |= UCTR;  // Transmit mode
     UCB0I2CSA = 0x40;   // Slave address
@@ -122,18 +81,9 @@ void i2c_write_led(unsigned int pattNum) {
 
     UCB0CTLW0 |= UCTXSTT;
 
-     unsigned int timeout = 10000;
-    while (!(ready_to_send) && timeout--) {
-    }
-    if (timeout == 0) {
-        return;
-    } 
-    ready_to_send = 0;
-
-
-    timeout = 10000;
-    while (!(UCB0IFG & UCSTPIFG) && timeout--) {
-        ;
-    } 
     UCB0IFG &= ~UCSTPIFG;
-}
+
+    i2c_busy = 0;
+
+} 
+ 

@@ -1,21 +1,32 @@
-#include <msp430fr2355.h>
+#include <msp430.h>
+#include <math.h>
 
-volatile int ADC_Value;
-volatile float temperature;
-volatile int mov_avg_index = 0;
-volatile int count = 0;
-volatile int temp_update_flag = 0;
-volatile int window_size = 3;
-
-volatile float mov_avg_buffer[99];
+volatile unsigned int ADC_value;
+volatile int temperature;
+volatile unsigned int mov_avg_index = 0;
+volatile unsigned int count = 0;
+volatile unsigned int temp_update_flag = 0;
+volatile unsigned int window_size = 3;
+volatile float mov_avg_buffer[100];
+volatile float numerator;
+volatile float denominator;
+volatile float add;
+volatile float base;
+volatile float square;
+volatile float running_sum = 0.0f;
+volatile float moving_average = 0.0f;
+volatile int sample_ready = 0;
 
 void setup_ADC() {
+
+    P1SEL0 |= BIT1;
+    P1SEL1 |= BIT1;
 
     ADCCTL0 &= ~ADCSHT;                                     // Clear ADCSHT
     ADCCTL0 |= ADCSHT_2;                                    // Conversion Cycles = 16
     ADCCTL0 |= ADCON;                                       // Turn ADC on
     
-    ADCCTL1 |= ADCCSEL_2;                                   // SMCLK Clock source
+    ADCCTL1 |= ADCSSEL_2;                                   // SMCLK Clock source
     ADCCTL1 |= ADCSHP;                                      // Sample signal source = timer
 
     ADCCTL2 &= ~ADCRES;                                     // Clear ADCRES
@@ -29,35 +40,58 @@ void setup_ADC() {
 
 void setup_temp_timer() {
     TB3R = 0;
-    TB3CTL |= (TBSSEL__SMCLK | MC__UP);                     // Small clock, Up counter
-    TB3CCR0 = 256;                                          // 0.5 sec timer
+    TB3CTL |= (TBSSEL__ACLK | MC__UP);                     // Small clock, Up counter
+    TB3CCR0 = 16000;                                          // 0.5 sec timer
     TB3CCTL0 |= CCIE;                                       // Enable Interrupt
     TB3CCTL0 &= ~CCIFG;
 }
 
-#pragma vector=ADC_VECTOR
-__interrupt void ADC_ISR(void){
-    ADC_Value = ADCMEM0;                                    // Read ADC value
+void compute_temp() {
+    if (sample_ready) {
+        __disable_interrupt();
+        sample_ready = 0;
+        float voltage = ADC_value * 0.000805f;
 
-    float voltage = ((float)ADC_value * 3.3) / 4096;        // Voltage is ADC_value * reference voltage / adc max value
+        numerator = 1.8639f - voltage;
+        denominator = 3.88f * .00001f;
+        add = 2.1962f * 1000000;
+        base = (numerator/denominator) + add;
 
-    temperature = (voltage / -0.01)                         // temperature is voltage / slope from datasheet
+        square = pow(base,0.5f);
+        int new_sample = (-1481.96f + square);
 
-    mov_avg_buffer[mov_avg_index] = temperature;            // Update moving average
-    mov_avg_index = (mov_avg_index + 1) % window_size;      // Update index until moving average length
+        if (count < window_size) {
+            mov_avg_buffer[mov_avg_index] = new_sample;
+            running_sum += new_sample;
+            count++;
+            mov_avg_index = (mov_avg_index + 1) % window_size;
+        } else {
+            running_sum -= mov_avg_buffer[mov_avg_index];
+            mov_avg_buffer[mov_avg_index] = new_sample;
+            running_sum += new_sample;
+            mov_avg_index = (mov_avg_index + 1) % window_size;
 
-    if (count < window_size) {
-        count++;
+            moving_average = running_sum / window_size;
+            moving_average = 10 * moving_average;
+            temp_update_flag = 1;
+        } 
+        __enable_interrupt();
     }
+    
+}
 
-    temp_update_flag = 1;
+#pragma vector=ADC_VECTOR
+__interrupt void ADC_ISR(void){    
+
+    ADC_value = ADCMEM0;                                    // Read ADC value
+    sample_ready = 1;
+    
 }
 
 #pragma vector=TIMER3_B0_VECTOR
 __interrupt void Timer3_B0_ISR(void) {
-    TB3CCTL0 &= ~CCIFG:
+    TB3CCTL0 &= ~CCIFG;
 
     ADCCTL0 |= ADCENC | ADCSC;                              // Trigger new ADC conversion every 0.5 seconds
-
-
 }
+

@@ -1,14 +1,15 @@
-#include <msp430fr2355.h>
-#include "temp_sensor.h"
-#include "keypad.h"
-#include "statusled.h"
+#include <msp430.h>
+#include "../src/temp_sensor.h"
+#include "../src/keypad.h"
+#include "../src/statusled.h"
+#include "../src/i2c_master.h"
 #include <string.h>
 #include <stdint.h>
 
 volatile int state_variable = 0;
 char keypad_input[4] = {};
 volatile int input_index = 0;
-volatile int send_i2c_update = 0;
+volatile int send_i2c_update_flag = 0;
 volatile int pattern = -1; // Current pattern
 volatile int step[4] = {0, 0, 0, 0}; // Current step in each pattern
 volatile float base_tp = 0.5;    // Default 1.0s
@@ -36,7 +37,7 @@ void setup_heartbeat() {
 
 void setup_ledbar_update_timer() {
     TB1CTL = TBSSEL__ACLK | MC__UP | ID__4;                             // Use ACLK, up mode, divider 4
-    TB1CCR0 = (int)((32768 * base_tp) / 4.0);                           // Set update interval based on base_tp
+    TB1CCR0 = (int)((32000 * base_tp) / 4.0);                           // Set update interval based on base_tp
     TB1CCTL0 = CCIE;                                                    // Enable interrupt for TB1 CCR0
 }
 
@@ -55,6 +56,9 @@ void rgb_timer_setup() {
 
 uint8_t compute_ledbar() {
     uint8_t led_pins = 0;
+    if (pattern < 0) {
+        led_pins = 0x00;
+    }
     switch (pattern) {
         case 0:
             led_pins = pattern_0;
@@ -71,8 +75,6 @@ uint8_t compute_ledbar() {
             led_pins = pattern_3[step[pattern]]; // Pattern 3
             step[pattern] = (step[pattern] + 1) % 6; // advance to the next step
             break;
-        case -1: 
-            led_pins = 0;
         default:
             break; 
     }
@@ -89,7 +91,100 @@ void change_led_pattern(int new_pattern) {
 
 void update_slave_ledbar() {
     volatile int ledbar_pattern = compute_ledbar();
+    while(i2c_busy);
     i2c_write_led(ledbar_pattern);
+}
+
+void process_keypad() {
+    char key = pressed_key();
+    if (key == '\0') return;
+// ----------------------------------------------------------------------------------------------------------------------------------------
+// ------------- LOCKED -------------------------------------------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------------------------------------------------------------------
+        if (state_variable == 0 || state_variable == 2) {                      // Locked
+            if (key != '\0') {                                                 // Check for key
+                
+                state_variable = 2;                                            // if key, unlocking
+                if (input_index < 3) {                                         
+                    keypad_input[input_index++] = key;
+                } else if (input_index == 3) {                                 // if 4 keys, check unlock
+                    check_key();
+                }
+            }
+// ----------------------------------------------------------------------------------------------------------------------------------------
+// ------------- UNLOCKED -----------------------------------------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------------------------------------------------------------------
+        } else if (state_variable == 1) {
+            // --------------------------------------------
+            // ------------ MODE SELECT -------------------
+            // --------------------------------------------
+            if (key != '\0') {                                                  // LOCK
+                if(key == 'D') {                                        
+                    change_led_pattern(-1);
+                    update_LCD_async(0xFE, 0xFEFE, 0xFE);
+                    state_variable = 0;
+                    input_index = 0;               
+                    memset(keypad_input, 0, sizeof(keypad_input));              // Clear input
+                }
+
+                else if (key == '*') {                                          // LED pattern update mode
+                    //update_LCD();
+                    state_variable = 3;
+                    input_index = 0;
+                    memset(keypad_input, 0, sizeof(keypad_input));
+                    update_LCD_async(10, 0xFFFF, 0xFF);
+                }
+                else if (key == '#') {                                          // Window size select mode
+                    //update_LCD();                                          
+                    state_variable = 4;
+                    input_index = 0;
+                    memset(keypad_input, 0, sizeof(keypad_input));
+                    update_LCD_async(11, 0xFFFF, 0xFF);
+                }
+            }
+        } else if (state_variable == 3) {
+            if(key >= '0' && key <= '9') {
+                uint8_t num = key - '0';
+                update_LCD_async(num, 0xFFFF, 0xFF);
+                change_led_pattern(num);
+                state_variable = 1;
+                input_index = 0;
+                memset(keypad_input, 0, sizeof(keypad_input));
+            }            
+        } else if (state_variable == 4) {
+            if(key == 'C') {
+            int new_window = atoi(keypad_input);
+            if(new_window > 0 && new_window < 100) {
+                window_size = new_window;
+                count = 0;
+            }
+            state_variable = 1;
+            input_index = 0;
+            memset(keypad_input, 0, sizeof(keypad_input));
+            update_LCD_async(pattern, 0xFFFF, window_size);
+            }
+            else {
+                keypad_input[input_index++] = key;
+            }
+        }
+}
+
+void process_flags(void) {
+    if(send_i2c_update_flag && state_variable == 1) {
+        update_slave_ledbar();
+        send_i2c_update_flag = 0;
+    }
+
+    if(temp_update_flag) {
+        temp_update_flag = 0;
+        update_LCD_async(0xFF, (int) moving_average, 0xFF);
+    }
+}
+
+void update_LCD_async(int modeID, int temperature, int window_size) {
+    if (state_variable != 0 && state_variable != 2) {
+        update_LCD(modeID, temperature, window_size);
+    }
 }
 
 int main(void)
@@ -119,181 +214,13 @@ int main(void)
 
     while(1)
     {
-// ----------------------------------------------------------------------------------------------------------------------------------------
-// ------------- LOCKED -------------------------------------------------------------------------------------------------------------------
-// ----------------------------------------------------------------------------------------------------------------------------------------
-        char key = pressed_key();
-        if (state_variable == 0 || state_variable == 2) {                      // Locked
-            change_led_pattern(-1);
-            if (key != '\0') {                                                 // Check for key
-                
-                state_variable = 2;                                            // if key, unlocking
-                if (input_index < 3) {                                         
-                    keypad_input[input_index] = key;
-                    input_index++;
-                } else if (input_index == 3) {                                 // if 4 keys, check unlock
-                    
-                    check_key();
-                }
-            }   
-// ----------------------------------------------------------------------------------------------------------------------------------------
-// ------------- UNLOCKED -----------------------------------------------------------------------------------------------------------------
-// ----------------------------------------------------------------------------------------------------------------------------------------
-        } else if(state_variable == 1) {
-            // --------------------------------------------
-            // ------------ MODE SELECT -------------------
-            // --------------------------------------------
-            if (key != '\0') {                                                  // LOCK
-                if(key == 'D') {                                            
-                    change_led_pattern(-1);
-                    state_variable = 0;
-                    input_index = 0;
-                    send_i2c_update = 0;                
-                    memset(keypad_input, 0, sizeof(keypad_input));              // Clear input
-                    //update_lcd(0xFE, 0xFE, 0xFE);
-                }
+        process_keypad();
+        compute_temp();
+        if (state_variable != 0 && state_variable != 2) {
+            while(i2c_busy);
+            process_flags();
+        }
 
-                else if (key == '*') {                                          // LED pattern update mode
-                    //update_LCD();
-                    state_variable = 3;
-                    input_index = 0;
-                    memset(keypad_input, 0, sizeof(keypad_input));
-                    //update_LCD(10, 0xFF, 0xFF);
-                }
-                else if (key == '#') {                                          // Window size select mode
-                    //update_LCD();                                          
-                    state_variable = 4;
-                    input_index = 0;
-                    memset(keypad_input, 0 sizeof(keypad_input));
-                    //update_LCD(11, 0xFF, 0xFF);
-                }
-                else if (key == 'A') {
-                    if (base_tp > 0.25) {
-                        base_tp -= 0.25;
-                    }
-                    input_variable = 0;
-                    memset(keypad_input, 0, sizeof(keypad_input));
-                    break;
-                }
-                else if (key == 'B') {
-                    base_tp += 0.25;
-                    input_variable = 0;
-                    memset(keypad_input, 0, sizeof(keypad_input));
-                    break;
-                }
-            }
-            if(temp_update_flag) {
-                temp_update_flag = 0;
-                if (count >= window_size) {
-                    float sum = 0.0f;
-                    for(int i = 0; i < window_size; i++) {
-                        sum += mov_avg_buffer[i];
-                    }
-                    int moving_average = (int) 10*(sum/window_size);
-                    //update_LCD(0xFF, moving_average, 0xFF);
-                }
-            }
-        }
-        // --------------------------------------------
-        // ---------- LED PATTERN SELECTION -----------
-        // --------------------------------------------
-        else if (state_variable == 3) {
-            char key = pressed_key();
-            if(key != '\0') {
-                send_i2c_update = 1;
-                case '0':
-                    //update_LCD(0, 0xFF, 0xFF);
-                    change_led_pattern(0);
-                    state_variable = 1;
-                    input_index = 0;
-                    memset(keypad_input, 0, sizeof(keypad_input));  // Clear input
-                    break;
-                case '1':
-                    //update_LCD(1, 0xFF, 0xFF);
-                    change_led_pattern(1);
-                    state_variable = 1;
-                    input_index = 0;
-                    memset(keypad_input, 0, sizeof(keypad_input));  // Clear input
-                    break;
-                case '2':
-                    //update_LCD(2, 0xFF, 0xFF);
-                    change_led_pattern(2);
-                    state_variable = 1;
-                    input_index = 0;
-                    memset(keypad_input, 0, sizeof(keypad_input));  // Clear input
-                    break;
-                case '3':
-                    //update_LCD(3, 0xFF, 0xFF);
-                    change_led_pattern(3);
-                    state_variable = 1;
-                    input_index = 0;
-                    memset(keypad_input, 0, sizeof(keypad_input));  // Clear input
-                    break;
-                case '4':
-                    //update_LCD(4, 0xFF, 0xFF);
-                    change_led_pattern(4);
-                    state_variable = 1;
-                    input_index = 0;
-                    memset(keypad_input, 0, sizeof(keypad_input));  // Clear input
-                    break;
-                case '5':
-                    //update_LCD(5, 0xFF, 0xFF);
-                    change_led_pattern(5);
-                    state_variable = 1;
-                    input_index = 0;
-                    memset(keypad_input, 0, sizeof(keypad_input));  // Clear input
-                    break;
-                case '6':
-                    //update_LCD(6, 0xFF, 0xFF);
-                    change_led_pattern(6);
-                    state_variable = 1;
-                    input_index = 0;
-                    memset(keypad_input, 0, sizeof(keypad_input));  // Clear input
-                    break;
-                case '7':
-                    //update_LCD(7, 0xFF, 0xFF);
-                    change_led_pattern(7);
-                    state_variable = 1;
-                    input_index = 0;
-                    memset(keypad_input, 0, sizeof(keypad_input));  // Clear input
-                    break;
-                case '8':
-                    //update_LCD(8, 0xFF, 0xFF);
-                    change_led_pattern(8);
-                    state_variable = 1;
-                    input_index = 0;
-                    memset(keypad_input, 0, sizeof(keypad_input));  // Clear input
-                    break;
-                case '9':
-                    //update_LCD(9, 0xFF, 0xFF);
-                    change_led_pattern(9);
-                    state_variable = 1;
-                    input_index = 0;
-                    memset(keypad_input, 0, sizeof(keypad_input));  // Clear input
-                    break;               
-            }
-        }
-        // --------------------------------------------
-        // ---------- WINDOW SIZE SELECTION -----------
-        // --------------------------------------------
-        else if (state_variable == 4) {
-            char key = pressed_key();
-            if(key != '\0') {
-                keypad_input[input_index] = key;
-                input_index++;
-            }
-            else if (key == 'C') {
-                int new_window = atoi(keypad_input);
-                if (new_window > 0 && new_window < 100) {
-                    window_size = new_window;
-                    count = 0;
-                }
-                state_variable = 1;
-                input_input = 0;
-                memset(keypad_input, 0, sizeof(keypad_input));
-                //update_LCD(0xFF, 0xFF, window_input);
-            }
-        }
     }
 }
 
@@ -310,24 +237,21 @@ __interrupt void Timer_B0_ISR(void) {
 #pragma vector = TIMER1_B0_VECTOR
 __interrupt void Timer_B1_ISR(void) {
     TB1CCTL0 &= ~CCIFG;
-
-    if (send_i2c_update) {
-        update_slave_ledbar();    
-    }
-    
+    send_i2c_update_flag = 1;
     TB1CCR0 = (int)((32768 * base_tp) / 4.0);
 }
 
-#pragma vector=EUSCI_B0_VECTOR
+ #pragma vector=EUSCI_B0_VECTOR
 __interrupt void EUSCI_B0_ISR(void){
     P1OUT |= BIT0;
     int current = UCB0IV;
     switch(current) {
-        case 0x02:  // TXIFG
+        case 0x18:  // TXIFG
             UCB0TXBUF = send_buff;
-            ready_to_send = 1;
+            i2c_busy = 0;
             break;
         default:
             break;
     }
 }
+  

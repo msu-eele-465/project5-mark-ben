@@ -11,6 +11,7 @@ extern volatile int count;
 extern volatile int temp_update_flag;
 extern volatile int window_size;     
 extern volatile float moving_average;
+extern volatile float running_sum;
 
 void setup_ADC(void);
 void setup_temp_timer(void);

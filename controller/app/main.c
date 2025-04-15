@@ -157,6 +157,7 @@ void process_keypad() {
             if(new_window > 0 && new_window < 100) {
                 window_size = new_window;
                 count = 0;
+                running_sum = 0;
             }
             state_variable = 1;
             input_index = 0;

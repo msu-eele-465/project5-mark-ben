@@ -57,9 +57,10 @@ void compute_temp() {
         add = 2.1962f * 1000000;
         base = (numerator/denominator) + add;
 
-        square = pow(base,0.5f);
-        int new_sample = (-1481.96f + square);
-
+        square = sqrt(base);
+        //square = powf(base,0.5f);
+        float new_sample = (-1481.96f + square);
+        new_sample = 10 * new_sample;
         if (count < window_size) {
             mov_avg_buffer[mov_avg_index] = new_sample;
             running_sum += new_sample;
@@ -70,7 +71,7 @@ void compute_temp() {
             mov_avg_buffer[mov_avg_index] = new_sample;
             running_sum += new_sample;
             mov_avg_index = (mov_avg_index + 1) % window_size;
-
+            
             moving_average = running_sum / window_size;
             moving_average = 10 * moving_average;
             temp_update_flag = 1;
